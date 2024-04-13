@@ -60,28 +60,31 @@ class FaceDataset(Dataset):
         samples = 3
 
         # create the meshes
-        #todo: aggiungere texture
+        # todo: aggiungere texture
         mesh = load_objs_as_meshes([neutralObj_name], load_textures=False, device=device)
-        meshes = []
-        for i in range(samples):
-            choice = secrets.choice(obj_names)
-            obj_names.remove(choice)
-            try:
-                meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
 
-            except:
-                choice = secrets.choice(obj_names)
-                obj_names.remove(choice)
-                meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
-                print("Maledetti Cinesi")
+        meshes = []
+        # fixme: mettere tutte le espressioni invece che una
+        meshes.append(load_objs_as_meshes([obj_names[0]], load_textures=True, device=device))
+        # for i in range(samples):
+        #     choice = secrets.choice(obj_names)
+        #     obj_names.remove(choice)
+        #     try:
+        #         meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
+        #
+        #     except:
+        #         choice = secrets.choice(obj_names)
+        #         obj_names.remove(choice)
+        #         meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
+        #         print("Maledetti Cinesi")
 
         # take the textures of each mesh
         textures = []
-        for tex in tex_names:
-            try:
-                textures.append(read_image(tex))
-            except:
-                print("Maledetti Cinesi")
+        # for tex in tex_names:
+        #     try:
+        #         textures.append(read_image(tex))
+        #     except:
+        #         print("Maledetti Cinesi")
 
         sample = {'Mesh Feature': mesh, 'Meshes Labels': meshes, 'Textures Labels': textures}
         # sample = {'Neutral Mesh': mesh, 'Expressions Meshes': meshes, }

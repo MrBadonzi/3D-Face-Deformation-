@@ -10,11 +10,11 @@ class MLP_verts(nn.Module):
         self.lin4 = nn.Linear(512, 128)
         self.lin5 = nn.Linear(128, 32)
         self.lin6 = nn.Linear(32, 3)
-        self.act = nn.LeakyReLU
+        self.act = nn.LeakyReLU()
 
-    def forward(self, mesh):
-        vertices = mesh.verts_packed()
-        x = self.lin1(vertices)
+    def forward(self, verts):
+
+        x = self.lin1(verts)
         x = self.act(x)
 
         # Depth = 4
