@@ -1,5 +1,6 @@
 import os
 import torch
+from pytorch3d.renderer import Textures
 import secrets
 # Data structures and functions for rendering
 
@@ -13,16 +14,14 @@ from torch.utils.data import Dataset
 from torchvision.io import read_image
 from tqdm import tqdm
 
+from util import create_texture
+
 # Setup
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
 else:
     device = torch.device("cpu")
-
-# Set paths
-DATA_DIR = "./facescape_trainset_001_100"
-
 
 class FaceDataset(Dataset):
     """Face Landmarks dataset."""
@@ -51,21 +50,16 @@ class FaceDataset(Dataset):
 
         # target expressions
         obj_names = [os.path.join(obj_folder, name + ".obj") for name in self.expressions_name]
-        tex_names = [os.path.join(obj_folder, name + ".jpg") for name in self.expressions_name]
 
         # neutral expressions: our features
         neutralObj_name = os.path.join(obj_folder, "1_neutral.obj")
 
-        #take 3 random samples
-        samples = 3
-
         # create the meshes
         # todo: aggiungere texture
-        mesh = load_objs_as_meshes([neutralObj_name], load_textures=False, device=device)
+        mesh = load_objs_as_meshes([neutralObj_name], load_textures=True, device=device)
 
-        meshes = []
-        # fixme: mettere tutte le espressioni invece che una
-        meshes.append(load_objs_as_meshes([obj_names[0]], load_textures=True, device=device))
+        # fixme: mettere espessioni random invece che sempre quella sorridente
+        label = load_objs_as_meshes([obj_names[0]], load_textures=True, device=device)
         # for i in range(samples):
         #     choice = secrets.choice(obj_names)
         #     obj_names.remove(choice)
@@ -78,6 +72,16 @@ class FaceDataset(Dataset):
         #         meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
         #         print("Maledetti Cinesi")
 
+        #TODO: APPLICARE VERE TEXTURES
+        # se una texture manca prendere altra espressione
+
+
+        # verts_rgb = create_texture(mesh.verts_packed())
+        # mesh.textures = Textures(verts_rgb=verts_rgb.to(device))
+        # #
+        # verts_rgb = create_texture(label.verts_packed())
+        # label.textures = Textures(verts_rgb=verts_rgb.to(device))
+
         # take the textures of each mesh
         textures = []
         # for tex in tex_names:
@@ -86,8 +90,9 @@ class FaceDataset(Dataset):
         #     except:
         #         print("Maledetti Cinesi")
 
-        sample = {'Mesh Feature': mesh, 'Meshes Labels': meshes, 'Textures Labels': textures}
+        sample = {'Mesh Feature': mesh, 'Meshes Labels': label, 'Textures Labels': textures}
         # sample = {'Neutral Mesh': mesh, 'Expressions Meshes': meshes, }
 
         return sample
+
 
