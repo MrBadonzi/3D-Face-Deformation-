@@ -57,9 +57,28 @@ class FaceDataset(Dataset):
         # create the meshes
         # todo: aggiungere texture
         mesh = load_objs_as_meshes([neutralObj_name], load_textures=True, device=device)
+        # We scale normalize and center the target mesh to fit in a sphere of radius 1
+        # centered at (0,0,0). (scale, center) will be used to bring the predicted mesh
+        # to its original center and scale.  Note that normalizing the target mesh,
+        # speeds up the optimization but is not necessary!
+        # verts = mesh.verts_packed()
+        # center = verts.mean(0)
+        # scale = max((verts - center).abs().max(0)[0])
+        # mesh.offset_verts_(-center)
+        # mesh.scale_verts_((1.0 / float(scale)))
 
         # fixme: mettere espessioni random invece che sempre quella sorridente
         label = load_objs_as_meshes([obj_names[0]], load_textures=True, device=device)
+
+        # verts = label.verts_packed()
+        # center = verts.mean(0)
+        # scale = max((verts - center).abs().max(0)[0])
+        # label.offset_verts_(-center)
+        # label.scale_verts_((1.0 / float(scale)))
+
+
+        # TODO: se una texture manca prendere altra espressione
+
         # for i in range(samples):
         #     choice = secrets.choice(obj_names)
         #     obj_names.remove(choice)
@@ -71,16 +90,6 @@ class FaceDataset(Dataset):
         #         obj_names.remove(choice)
         #         meshes.append(load_objs_as_meshes([choice], load_textures=False, device=device))
         #         print("Maledetti Cinesi")
-
-        #TODO: APPLICARE VERE TEXTURES
-        # se una texture manca prendere altra espressione
-
-
-        # verts_rgb = create_texture(mesh.verts_packed())
-        # mesh.textures = Textures(verts_rgb=verts_rgb.to(device))
-        # #
-        # verts_rgb = create_texture(label.verts_packed())
-        # label.textures = Textures(verts_rgb=verts_rgb.to(device))
 
         # take the textures of each mesh
         textures = []

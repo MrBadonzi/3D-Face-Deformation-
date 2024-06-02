@@ -39,7 +39,7 @@ lights = PointLights(device=device, location=[[2.0, 2.0, -2.0]])
 # broadcasting. So we can view the camera from the a distance of dist=2.7, and
 # then specify elevation and azimuth angles for each viewpoint as tensors.
 
-R, T = look_at_view_transform(dist=50.7, elev=elev, azim=azim)
+R, T = look_at_view_transform(dist=50.2, elev=elev, azim=azim)
 cameras = FoVPerspectiveCameras(device=device, R=R, T=T, znear=0.1)
 #
 # We arbitrarily choose one particular view that will be used to visualize
@@ -61,11 +61,11 @@ target_cameras = [FoVPerspectiveCameras(device=device, R=R[None, i, ...],
 # explanation of the difference between naive and coarse-to-fine rasterization.
 sigma = 1e-4
 raster_settings = RasterizationSettings(
-    image_size=400,
+    image_size=1080,
     # blur_radius=0.0,
     max_faces_per_bin=100000,
-    blur_radius=np.log(1. / 1e-4 - 1.) * sigma,
-    faces_per_pixel=2,
+    # blur_radius=np.log(1. / 1e-4 - 1.) * sigma,
+    faces_per_pixel=1,
     perspective_correct=False,
 
 )
