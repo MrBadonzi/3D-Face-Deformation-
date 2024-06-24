@@ -27,6 +27,7 @@ def mesh_collate(batch: List[Dict]):
 
     collated_dict['Mesh Feature'] = join_meshes_as_batch(collated_dict['Mesh Feature'], include_textures=True)
     collated_dict['Meshes Labels'] = join_meshes_as_batch(collated_dict['Meshes Labels'], include_textures=True)
+    collated_dict['exp'] = torch.tensor(collated_dict['exp'], dtype=torch.float).to(device)
 
     return collated_dict
 

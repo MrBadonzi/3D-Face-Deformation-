@@ -1,14 +1,19 @@
 import torch
-from pytorch3d.datasets import collate_batched_meshes
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 from pytorch3d.loss import (mesh_edge_loss, mesh_laplacian_smoothing, mesh_normal_consistency)
+from torch.nn import MSELoss
 from torch.utils.data import DataLoader
-import wandb
 from tqdm import tqdm
-from key import your_api_key
 
-from dataset1 import FaceDataset
-from myrender import renderer
+import wandb
+from dataset import FaceDataset
+from key import your_api_key
+from losses import landmark_loss
+from myrender import lights, camera, silhouette_renderer, renderer_textured
 from network import MLP_verts
+from util import mesh_collate, mesh_to_wanb, Landmark_positions
+
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -20,97 +25,156 @@ else:
 losses = {
     "silhouette": {"weight": 1.0, "values": []},
     "edge": {"weight": 1.0, "values": []},
-    "normal": {"weight": 0.01, "values": []},
+    "normal": {"weight": 0.1, "values": []},
     "laplacian": {"weight": 1.0, "values": []},
+    "mse": {"weight": 0.5, "values": []},
+    "landmark": {"weight": 1.0, "values": []},
+    "rgb": {"weight": 1.0, "values": []}
+
 }
 
 
 def update_mesh_shape_prior_losses(meshes, loss):
-    l_edge = torch.empty(len(meshes), device=device)
-    l_normal = torch.empty(len(meshes), device=device)
-    l_laplacian = torch.empty(len(meshes), device=device)
-
-    for i in range(len(meshes)):
-
-        # and (b) the edge length of the predicted mesh
-        l_edge[i]=mesh_edge_loss(meshes[i])
-
-        # mesh normal consistency
-        l_normal[i] = mesh_normal_consistency(meshes[i])
-
-        # mesh laplacian smoothing
-        l_laplacian[i] = mesh_laplacian_smoothing(meshes[i], method="uniform")
-
-    loss["edge"] = torch.mean(l_edge)
-    loss["normal"] = torch.mean(l_normal)
-    loss["laplacian"] = torch.mean(l_laplacian)
+    loss["edge"] = mesh_edge_loss(meshes)
+    loss["normal"] = mesh_normal_consistency(meshes)
+    loss["laplacian"] = mesh_laplacian_smoothing(meshes, method="uniform")
 
 
-
-wandb.login(key=your_api_key)
-# # start a new wandb run to track this script
 config = {
-    "learning_rate": 0.02,
+    "learning_rate": 0.002,
     "architecture": "mlp",
     "epochs": 20,
+    "num_views": 20,
+    # original 5
+    "num_views_per_iteration": 1,
+    "plot_period": 1,
 }
-#
-wandb.init(
-    # set the wandb project where this run will be logged
-    project="3D Face Deformation",
-    # track hyperparameters and run metadata
-    config= config
-)
-
-
-# Dataset Creation
 
 DATA_DIR = "./facescape_trainset_001_100"
-full_dataset = FaceDataset(DATA_DIR)
-
-train_size = int(0.8 * len(full_dataset))
-test_size = len(full_dataset) - train_size
-train_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [train_size, test_size])
 
 if __name__ == '__main__':
-    train_dataloader = DataLoader(train_dataset, batch_size=12, shuffle=True, collate_fn=collate_batched_meshes)
-    test_dataloader = DataLoader(test_dataset, batch_size=12, shuffle=False, collate_fn=collate_batched_meshes)
+
+    wandb.login(key=your_api_key)
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="3D Face Deformation",
+        # track hyperparameters and run metadata
+        config=config
+    )
+    # Dataset Creation
+    full_dataset = FaceDataset(DATA_DIR)
+
+    train_size = int(0.8 * len(full_dataset))
+    test_size = len(full_dataset) - train_size
+    train_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [train_size, test_size])
+
+    # # start a new wandb run to track this script
+    # TODO: CERCARE DI CAPIRE PERCHE NON FUNZIONA IL RENDERING CON I WORKERS
+    train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, collate_fn=mesh_collate,
+                                  num_workers=0)
 
     model = MLP_verts().to(device)
+    l2_mesh = MSELoss()
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=config["learning_rate"])
+    NUM_ACCUMULATION_STEPS = 4
+
+    # STEP 2: Create an FaceLandmarker object.
+    base_options = python.BaseOptions(model_asset_path='face_landmarker_v2_with_blendshapes.task')
+    options = vision.FaceLandmarkerOptions(base_options=base_options,
+                                           output_face_blendshapes=True,
+                                           output_facial_transformation_matrixes=True,
+                                           num_faces=1)
+    detector = vision.FaceLandmarker.create_from_options(options)
+
+    # The landmark positions that we don't want to modify
+    Important_Face_Areas = set()
+    for array in Landmark_positions.values():
+        Important_Face_Areas.update(array)
+
+    '''
+    ####################################################################################################################
+    #                                        START OF THE TRAIN                                                        #
+    ####################################################################################################################
+    '''
 
     for epoch in range(config["epochs"]):
+        epoch_loss = 0
         model.train()
-        for batch in tqdm(train_dataloader):
+        for idx, batch in enumerate(tqdm(train_dataloader, desc=f"epoch: {epoch + 1}")):
 
-            optimizer.zero_grad()
+            neutral_meshes, expression_meshes, exp = batch["Mesh Feature"], batch['Meshes Labels'], batch['exp']
 
-            neutral_meshes, expression_meshes = batch['Mesh Feature'], batch['Meshes Labels']
-
-            # take the vertices of all the mashes in the batch
-            neutral_verts = torch.stack([mesh.verts_packed() for mesh in neutral_meshes])
-
-            deform_verts = model(neutral_verts)
+            deform_verts = model(neutral_meshes.verts_packed(), exp)
             # apply the new modified vertices to the original neutral mesh to modify the expression
-            new_src_meshes = [neutral_meshes[i].offset_verts(deform_verts[i]) for i in range(len(neutral_meshes))]
+            new_src_meshes = neutral_meshes.offset_verts(deform_verts)
 
             loss = {k: torch.tensor(0.0, device=device) for k in losses}
-            update_mesh_shape_prior_losses(new_src_meshes, loss)
+            # RENDER MESHES
+            for i in range(len(new_src_meshes)):
+                expression = expression_meshes[i]
+                # soft render configurations
+                # render the mesh silhouette
+                # image_target = silhouette_renderer(expression, cameras=camera, lights=lights)
+                # images_predicted = silhouette_renderer(new_src_meshes[i], cameras=camera, lights=lights)
+                # target_silhouette = image_target[0, ..., 3]
+                # predicted_silhouette = images_predicted[0, ..., 3]
 
-            # Weighted sum of the losses
+                # Squared L2 distance between the predicted silhouette and the target silhouette from our dataset
+                # loss_silhouette = ((predicted_silhouette - target_silhouette) ** 2).mean()
+                # loss["silhouette"] += loss_silhouette / config['num_views_per_iteration']
+
+                # predicted_silhouette = Image.fromarray(
+                #     (predicted_silhouette.cpu().detach().numpy() * 255).astype(np.uint8))
+                # target_silhouette = Image.fromarray(
+                #     (target_silhouette.cpu().detach().numpy() * 255).astype(np.uint8))
+                # wandb.log({f"predicted sihoulette": wandb.Image(predicted_silhouette),
+                #            "target sihoulette": wandb.Image(target_silhouette)}, )
+
+                # render the rgb image
+                images_predicted_rgb = renderer_textured(new_src_meshes[i], cameras=camera, lights=lights)
+                predicted_rgb = images_predicted_rgb[..., :3]
+                images_target_rgb = renderer_textured(expression, cameras=camera, lights=lights)
+                target_rgb = images_target_rgb[..., :3]
+                # loss_rgb = ((predicted_rgb - target_rgb) ** 2).mean()
+                # loss["rgb"] += loss_rgb / config['num_views_per_iteration']
+                loss['landmark'] += landmark_loss(predicted_rgb[0], target_rgb[0], detector) / config[
+                    'num_views_per_iteration']
+
+            # update_mesh_shape_prior_losses(new_src_meshes, loss)
             sum_loss = torch.tensor(0.0, device=device)
             for k, l in loss.items():
                 sum_loss += l * losses[k]["weight"]
                 losses[k]["values"].append(float(l.detach().cpu()))
 
-            # Print the losses
-            wandb.log({"total_loss": sum_loss})
-
+            sum_loss = sum_loss / NUM_ACCUMULATION_STEPS
             # Optimization step
             sum_loss.backward()
-            optimizer.step()
 
-    torch.save(model.state_dict(), 'MLP_verts.pth')
+            if ((idx + 1) % NUM_ACCUMULATION_STEPS == 0) or (idx + 1 == len(train_dataloader)):
+                # Update Optimizer
+                optimizer.step()
+                optimizer.zero_grad()
+                # Print the losses
+                wandb.log({"batch_loss": sum_loss,
+                           'landmarks': loss["landmark"],
+                           # "silohuette loss": loss["silhouette"],
+                           # "edge": loss["edge"],
+                           # "normal": loss["normal"],
+                           # "laplacian": loss["laplacian"],
+                           # "rgb": loss["rgb"]
+                           })
+                epoch_loss += sum_loss / (len(train_dataloader) / NUM_ACCUMULATION_STEPS)
+
+        # Plot mesh
+        if epoch % config["plot_period"] == 0:
+            neutral, predicted, target = mesh_to_wanb(neutral_meshes[0], new_src_meshes[0], expression_meshes[0][0])
+            wandb.log({"predicted": wandb.Plotly(predicted), "target": wandb.Plotly(target),
+                       "neutral": wandb.Plotly(neutral)})
+        # write the losses
+        wandb.log({"epoch_loss": epoch_loss})
+
+    # TODO: FARE CHECKPOINTS
+    torch.save(model.state_dict(), 'Models/MLP_verts.pth')
     torch.save(model.state_dict(), "model.h5")
     wandb.save('model.h5')
     wandb.finish()
